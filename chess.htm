@@ -1,0 +1,191 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chess Board — Click-to-move</title>
+  <style>
+    :root{--size:64px}
+    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial;display:flex;gap:24px;align-items:flex-start;padding:24px;background:#f3f4f6}
+    .board{display:grid;grid-template-columns:repeat(8,var(--size));grid-template-rows:repeat(8,var(--size));border:6px solid #111;border-radius:8px;overflow:hidden}
+    .square{width:var(--size);height:var(--size);display:flex;align-items:center;justify-content:center;font-size:28px;cursor:pointer;user-select:none}
+    .light{background:#f0d9b5}
+    .dark{background:#b58863}
+    .square.selected{outline:3px solid #2a9df4;box-shadow:inset 0 0 0 2px rgba(42,157,244,0.12)}
+    .square.move{background:rgba(42,157,244,0.25)}
+    .coords{display:flex;flex-direction:column;gap:12px}
+    .info{background:#fff;border-radius:8px;padding:12px;box-shadow:0 4px 14px rgba(2,6,23,0.08);min-width:220px}
+    header{font-weight:700;font-size:18px;margin-bottom:8px}
+    button{margin-top:8px;padding:8px 10px;border-radius:6px;border:1px solid #ddd;background:#fff;cursor:pointer}
+    .footer{font-size:13px;color:#444;margin-top:8px}
+    .turn{font-weight:600}
+    .overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;visibility:hidden;opacity:0;transition:0.3s}
+    .overlay.show{visibility:visible;opacity:1}
+    .gameover-box{background:white;padding:24px;border-radius:12px;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,0.2)}
+    .gameover-box h1{margin:0 0 12px;font-size:24px}
+  </style>
+</head>
+<body>
+  <div>
+    <div class="board" id="board" aria-label="Chess board"></div>
+  </div>
+  <div class="coords">
+    <div class="info">
+      <div class="header"><header>Simple Chess (click to select — click destination to move)</header></div>
+      <div>Rules implemented: piece movement, captures, turn-taking.</div>
+      <div class="footer">Now includes: King death = Game Over with restart option.</div>
+      <div style="margin-top:10px">Turn: <span id="turn" class="turn">White</span></div>
+      <button id="resetBtn">Reset Position</button>
+      <button id="flipBtn">Flip Board</button>
+    </div>
+  </div>  <div class="overlay" id="overlay">
+    <div class="gameover-box">
+      <h1 id="winnerText">Game Over!</h1>
+      <button id="restartBtn">Restart Game</button>
+    </div>
+  </div><script>
+const PIECES = {
+  wK: '♔', wQ: '♕', wR: '♖', wB: '♗', wN: '♘', wP: '♙',
+  bK: '♚', bQ: '♛', bR: '♜', bB: '♝', bN: '♞', bP: '♟'
+};
+
+let board = [];
+let whiteToMove = true;
+let selected = null;
+let highlights = [];
+let flipped = false;
+let gameOver = false;
+
+const startFEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
+
+function loadFEN(fen){
+  board = Array.from({length:8},()=>Array(8).fill(null));
+  const ranks = fen.split('/');
+  for(let r=0;r<8;r++){
+    let row = ranks[r];
+    let c = 0;
+    for(const ch of row){
+      if(/[1-8]/.test(ch)){ c += parseInt(ch); }
+      else{
+        const color = ch === ch.toUpperCase() ? 'w' : 'b';
+        const type = ch.toLowerCase();
+        const key = color + ({k:'K',q:'Q',r:'R',b:'B',n:'N',p:'P'}[type]);
+        board[r][c] = key;
+        c++;
+      }
+    }
+  }
+}
+
+function renderBoard(){
+  const boardEl = document.getElementById('board');
+  boardEl.innerHTML = '';
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      const sq = document.createElement('div');
+      sq.className = 'square ' + (((r+c)%2===0)?'light':'dark');
+      const piece = board[r][c];
+      if(piece) sq.textContent = PIECES[piece];
+      if(selected && selected.r===r && selected.c===c) sq.classList.add('selected');
+      if(highlights.some(h=>h.r===r && h.c===c)) sq.classList.add('move');
+      sq.addEventListener('click', ()=>!gameOver && onSquareClick(r,c));
+      boardEl.appendChild(sq);
+    }
+  }
+  document.getElementById('turn').textContent = whiteToMove ? 'White' : 'Black';
+}
+
+function onSquareClick(r,c){
+  const piece = board[r][c];
+  if(selected){
+    const isLegal = highlights.some(h=>h.r===r && h.c===c);
+    if(isLegal){
+      makeMove(selected.r, selected.c, r, c);
+      selected = null; highlights = [];
+      renderBoard();
+      return;
+    }
+    if(piece && piece[0] === (whiteToMove? 'w':'b')){
+      selected = {r,c}; highlights = generateMoves(r,c);
+      renderBoard(); return;
+    }
+    selected = null; highlights = []; renderBoard();
+  } else if(piece && piece[0] === (whiteToMove? 'w':'b')){
+    selected = {r,c}; highlights = generateMoves(r,c); renderBoard();
+  }
+}
+
+function makeMove(r1,c1,r2,c2){
+  const moving = board[r1][c1];
+  const target = board[r2][c2];
+  if(target && target[1]==='K'){
+    endGame(moving[0]==='w' ? 'White' : 'Black');
+    return;
+  }
+  board[r2][c2] = moving;
+  board[r1][c1] = null;
+  whiteToMove = !whiteToMove;
+}
+
+function inBounds(r,c){ return r>=0 && r<8 && c>=0 && c<8; }
+
+function generateMoves(r,c){
+  const piece = board[r][c]; if(!piece) return [];
+  const color = piece[0]; const type = piece[1];
+  const enemy = color==='w'?'b':'w';
+  const moves=[];
+  if(type==='P'){
+    const dir=color==='w'?-1:1; const start=color==='w'?6:1;
+    if(inBounds(r+dir,c)&&!board[r+dir][c]) moves.push({r:r+dir,c});
+    if(r===start&&!board[r+dir][c]&&!board[r+2*dir][c]) moves.push({r:r+2*dir,c});
+    for(const dc of[-1,1]){const rr=r+dir,cc=c+dc;if(inBounds(rr,cc)&&board[rr][cc]&&board[rr][cc][0]===enemy)moves.push({r:rr,c:cc});}
+    return moves;
+  }
+  if(type==='N'){
+    const deltas=[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+    for(const[dr,dc]of deltas){const rr=r+dr,cc=c+dc;if(inBounds(rr,cc)&&(!board[rr][cc]||board[rr][cc][0]===enemy))moves.push({r:rr,c:cc});}
+    return moves;
+  }
+  if(type==='K'){
+    for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){if(dr||dc){const rr=r+dr,cc=c+dc;if(inBounds(rr,cc)&&(!board[rr][cc]||board[rr][cc][0]===enemy))moves.push({r:rr,c:cc});}}
+    return moves;
+  }
+  const slide=dirs=>{for(const[dr,dc]of dirs){let rr=r+dr,cc=c+dc;while(inBounds(rr,cc)){if(!board[rr][cc])moves.push({r:rr,c:cc});else{if(board[rr][cc][0]===enemy)moves.push({r:rr,c:cc});break;}rr+=dr;cc+=dc;}}};
+  if(type==='R')slide([[1,0],[-1,0],[0,1],[0,-1]]);
+  if(type==='B')slide([[1,1],[1,-1],[-1,1],[-1,-1]]);
+  if(type==='Q')slide([[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]);
+  return moves;
+}
+
+function endGame(winner){
+  gameOver = true;
+  document.getElementById('winnerText').textContent = `${winner} wins by checkmate!`;
+  document.getElementById('overlay').classList.add('show');
+}
+
+function reset(){
+  loadFEN(startFEN);
+  whiteToMove=true;
+  selected=null;
+  highlights=[];
+  gameOver=false;
+  document.getElementById('overlay').classList.remove('show');
+  renderBoard();
+}
+
+function flipBoard(){
+  flipped=!flipped;
+  const boardEl=document.getElementById('board');
+  boardEl.style.transform=flipped?'rotate(180deg)':'none';
+  Array.from(document.getElementsByClassName('square')).forEach(sq=>sq.style.transform=flipped?'rotate(180deg)':'none');
+}
+
+document.getElementById('resetBtn').addEventListener('click',reset);
+document.getElementById('flipBtn').addEventListener('click',flipBoard);
+document.getElementById('restartBtn').addEventListener('click',reset);
+
+loadFEN(startFEN);
+renderBoard();
+</script></body>
+</html>
